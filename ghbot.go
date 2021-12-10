@@ -52,9 +52,17 @@ var (
 	}
 )
 
+func isGithubURL(url_ string) bool {
+	return strings.HasPrefix(url_, "https://github.com/") || strings.HasPrefix(url_, "https://www.github.com/")
+}
+
 // simple client for the git.io shortener
 func shortenURL(url_ string) (result string) {
 	result = url_
+	// if this a selfhosted gogs or gitea, don't attempt to shorten:
+	if !isGithubURL(url_) {
+		return
+	}
 	resp, err := httpClient.PostForm("https://git.io", url.Values{
 		"url": {url_},
 	})
@@ -69,16 +77,6 @@ func shortenURL(url_ string) (result string) {
 	return
 }
 
-func HandlePanic(restartable func()) {
-	if r := recover(); r != nil {
-		log.Printf("Panic encountered: %v\n%s", r, debug.Stack())
-		if restartable != nil {
-			time.Sleep(time.Second)
-			go restartable()
-		}
-	}
-}
-
 func verifyHmacSha256(msg, sig, key []byte) bool {
 	mac := hmac.New(sha256.New, key)
 	mac.Write(msg)
@@ -88,10 +86,11 @@ func verifyHmacSha256(msg, sig, key []byte) bool {
 
 type Bot struct {
 	ircevent.Connection
-	Channel       string
-	GHSecretToken []byte
-	UsePrivmsg    bool
-	Debug         bool
+	Channel          string
+	GHSignatureToken []byte
+	GLStaticToken    []byte
+	UsePrivmsg       bool
+	Debug            bool
 }
 
 func (bot *Bot) announce(message string) {
@@ -103,19 +102,95 @@ func (bot *Bot) announce(message string) {
 	}
 }
 
-// implements http.Handler
-func (bot *Bot) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	defer HandlePanic(nil)
+var (
+	signatureHeaders = []string{"X-Hub-Signature-256", "X-Gogs-Signature", "X-Gitea-Signature"}
+	msgTypeHeaders   = []string{"X-Github-Event", "X-Gogs-Event", "X-Gitea-Event"}
+)
 
-	signature := req.Header.Get("X-Hub-Signature-256")
-	if signature == "" {
-		log.Printf("received unsigned request from %s\n", req.RemoteAddr)
+func extractHeaders(headers http.Header) (msgType string, signature []byte, gitlabToken string, err error) {
+	tryAllHeaders := func(headers http.Header, names []string) (result string) {
+		for _, name := range names {
+			if val := headers.Get(name); val != "" {
+				return val
+			}
+		}
 		return
 	}
-	signature = strings.TrimPrefix(signature, "sha256=")
-	decSig, err := hex.DecodeString(signature)
+	rawSignature := tryAllHeaders(headers, signatureHeaders)
+	if rawSignature != "" {
+		rawSignature = strings.TrimPrefix(rawSignature, "sha256=")
+		signature, err = hex.DecodeString(rawSignature)
+	}
+	msgType = strings.ToLower(tryAllHeaders(headers, msgTypeHeaders))
+	gitlabToken = headers.Get("X-Gitlab-Token")
+	return
+}
+
+type messageHandler func(msgType string, body []byte)
+
+// implements http.Handler
+func (bot *Bot) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Panic encountered: %v\n%s", r, debug.Stack())
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}()
+
+	msgType, signature, gitlabToken, err := extractHeaders(req.Header)
 	if err != nil {
-		log.Printf("received invalid signature data from %s: %v\n", req.RemoteAddr, err)
+		log.Printf("error reading headers: %s\n", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if bot.GLStaticToken != nil {
+		if gitlabToken == "" {
+			log.Printf("ignoring request without required GitLab static token\n")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		} else if !hmac.Equal([]byte(gitlabToken), bot.GLStaticToken) {
+			log.Printf("ignoring request with incorrect GitLab static token\n")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+	} else if len(signature) == 0 {
+		log.Printf("ignoring request without required signature token\n")
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	var handler messageHandler
+	switch msgType {
+	case "ping":
+		handler = bot.processPing
+	case "create", "delete":
+		handler = bot.processGitCreateDelete
+	case "commit_comment":
+		handler = bot.processCommitComment
+	case "issue_comment":
+		handler = bot.processIssueComment
+	case "issues":
+		handler = bot.processIssues
+	case "push":
+		handler = bot.processPush
+	case "pull_request":
+		handler = bot.processPullRequest
+	case "pull_request_review":
+		handler = bot.processPullRequestReview
+	case "pull_request_review_comment":
+		// TODO figure out how to display at most 1 or 2 of these
+		// per pull_request_review event
+	case "workflow_run":
+		handler = bot.processWorkflowRun
+	}
+
+	// if we can't handle the request, don't read the body:
+	if handler == nil {
+		if bot.Debug {
+			log.Printf("ignoring message type `%s`\n", msgType)
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -126,36 +201,33 @@ func (bot *Bot) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if !verifyHmacSha256(body, decSig, bot.GHSecretToken) {
+	// if it's GitLab, we already verified the static token, otherwise
+	// we need a signature check:
+	if bot.GLStaticToken == nil && !verifyHmacSha256(body, signature, bot.GHSignatureToken) {
 		log.Printf("invalid HMAC signature from %s\n", req.RemoteAddr)
+		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 
-	msgType := strings.ToLower(req.Header.Get("X-Github-Event"))
 	if bot.Debug {
 		log.Printf("received %s: %s\n", msgType, body)
 	}
-	switch msgType {
-	case "create", "delete":
-		bot.processGitCreateDelete(msgType, body)
-	case "commit_comment":
-		bot.processCommitComment(msgType, body)
-	case "issue_comment":
-		bot.processIssueComment(msgType, body)
-	case "issues":
-		bot.processIssues(msgType, body)
-	case "push":
-		bot.processPush(msgType, body)
-	case "pull_request":
-		bot.processPullRequest(msgType, body)
-	case "pull_request_review":
-		bot.processPullRequestReview(msgType, body)
-	case "pull_request_review_comment":
-		// TODO figure out how to display at most 1 or 2 of these
-		// per pull_request_review event
-	case "workflow_run":
-		bot.processWorkflowRun(msgType, body)
+	handler(msgType, body)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (bot *Bot) processPing(msgType string, body []byte) {
+	var evt github.PingEvent
+	err := json.Unmarshal(body, &evt)
+	if err != nil {
+		log.Printf("invalid JSON for %s: %v\n", msgType, err)
+		return
 	}
+	url := "n/a"
+	if evt.Hook != nil && evt.Hook.URL != nil {
+		url = *evt.Hook.URL
+	}
+	log.Printf("successfully authenticated ping from %s", url)
 }
 
 func (bot *Bot) processWorkflowRun(msgType string, body []byte) {
@@ -201,7 +273,7 @@ func (bot *Bot) processGitCreateDelete(msgType string, body []byte) {
 func truncateComment(comment string) (result string) {
 	result = ircutils.TruncateUTF8Safe(comment, commentTextLimitBytes)
 	if len(result) < len(comment) {
-		result = fmt.Sprintf("%s [...]", result)
+		result = fmt.Sprintf("%s[...]", result)
 	}
 	return
 }
@@ -272,17 +344,20 @@ func (bot *Bot) processIssues(msgType string, body []byte) {
 		return
 	}
 	action := *evt.Action
+	var description string
 	switch action {
-	case "opened", "edited", "deleted", "closed", "reopened", "assigned", "unassigned":
+	case "opened":
+		description = fmt.Sprintf("\"%s\" ", truncateComment(*evt.Issue.Body))
+	case "edited", "deleted", "closed", "reopened", "assigned", "unassigned":
 		// ok
 	default:
 		// ignore "labeled", "milestoned", a few others
 		return
 	}
-	bot.announce(fmt.Sprintf("%s/%s: %s %s issue #%d (%s): %s",
+	bot.announce(fmt.Sprintf("%s/%s: %s %s issue #%d (%s): %s%s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		*evt.Sender.Login, *evt.Action, *evt.Issue.Number, *evt.Issue.Title,
-		shortenURL(*evt.Issue.HTMLURL)))
+		description, shortenURL(*evt.Issue.HTMLURL)))
 }
 
 func (bot *Bot) processIssueComment(msgType string, body []byte) {
@@ -295,7 +370,7 @@ func (bot *Bot) processIssueComment(msgType string, body []byte) {
 	bot.announce(fmt.Sprintf("%s/%s: %s commented on #%d (%s): \"%s\" %s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		*evt.Comment.User.Login, *evt.Issue.Number, *evt.Issue.Title,
-		ircutils.SanitizeText(*evt.Comment.Body, commentTextLimitBytes),
+		truncateComment(*evt.Comment.Body),
 		shortenURL(*evt.Comment.HTMLURL),
 	))
 }
@@ -322,24 +397,46 @@ func (bot *Bot) processPush(msgType string, body []byte) {
 	if evt.Ref != nil {
 		ref = *evt.Ref
 	}
+	username := "n/a"
+	if evt.Pusher.Name != nil {
+		username = *evt.Pusher.Name
+	} else if evt.Pusher.Login != nil {
+		// gogs publishes 'username' and 'login' but not 'name':
+		username = *evt.Pusher.Login
+	}
+	commits := evt.Commits
+	if len(commits) == 0 {
+		return
+	}
+	if len(commits) == 1 {
+		bot.announce(fmt.Sprintf("%s/%s: %s pushed a commit to %s: %s",
+			*evt.Repo.Owner.Login, *evt.Repo.Name,
+			username, ref,
+			bot.describeCommit(*commits[0]),
+		))
+		return
+	}
 	bot.announce(fmt.Sprintf("%s/%s: %s pushed %d commit(s) to %s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
-		*evt.Pusher.Name, len(evt.Commits), ref))
-	commits := evt.Commits
+		username, len(evt.Commits), ref))
 	// grace of 1, since we'd have to display a "commits omitted" message anyway
 	omitted := len(commits) - maxCommits
 	if omitted > 1 {
 		commits = commits[len(commits)-maxCommits:]
 	}
 	for _, commit := range commits {
-		author, message := extractAuthorMessage(*commit)
-		bot.announce(fmt.Sprintf("%s [%s]: \"%s\" %s",
-			(*commit.ID)[:12], author, message, shortenURL(*commit.URL),
-		))
+		bot.announce(bot.describeCommit(*commit))
 	}
 	if omitted > 1 {
 		bot.announce(fmt.Sprintf("+%d hidden commit(s)", omitted))
 	}
+}
+
+func (bot *Bot) describeCommit(commit github.HeadCommit) string {
+	author, message := extractAuthorMessage(commit)
+	return fmt.Sprintf("%s [%s]: \"%s\" %s",
+		(*commit.ID)[:12], author, message, shortenURL(*commit.URL),
+	)
 }
 
 func newBot() (bot *Bot, err error) {
@@ -347,7 +444,16 @@ func newBot() (bot *Bot, err error) {
 	nick := os.Getenv("GHBOT_NICK")
 	server := os.Getenv("GHBOT_SERVER")
 	httpaddr := os.Getenv("GHBOT_LISTEN_ADDR")
-	token := os.Getenv("GHBOT_GITHUB_SECRET_TOKEN")
+	var ghSignatureToken, glStaticToken []byte
+	if ghTokenStr := os.Getenv("GHBOT_GITHUB_SECRET_TOKEN"); ghTokenStr != "" {
+		// HMAC-SHA256 signature token, used by GitHub, Gogs, Gitea:
+		ghSignatureToken = []byte(ghTokenStr)
+	} else if glTokenStr := os.Getenv("GHBOT_GITLAB_SECRET_TOKEN"); glTokenStr != "" {
+		// static token, used by Gitlab:
+		glStaticToken = []byte(glTokenStr)
+	} else {
+		return nil, fmt.Errorf("you must export either GHBOT_GITHUB_SECRET_TOKEN or GHBOT_GITLAB_SECRET_TOKEN")
+	}
 	channel := os.Getenv("GHBOT_CHANNEL")
 	// SASL is optional:
 	saslLogin := os.Getenv("GHBOT_SASL_LOGIN")
@@ -391,10 +497,11 @@ func newBot() (bot *Bot, err error) {
 			QuitMessage:  version,
 			Debug:        debug,
 		},
-		Channel:       channel,
-		GHSecretToken: []byte(token),
-		Debug:         debug,
-		UsePrivmsg:    usePrivmsg,
+		Channel:          channel,
+		GHSignatureToken: ghSignatureToken,
+		GLStaticToken:    glStaticToken,
+		Debug:            debug,
+		UsePrivmsg:       usePrivmsg,
 	}
 
 	bot.AddConnectCallback(func(e ircmsg.Message) {

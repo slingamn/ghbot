@@ -25,6 +25,8 @@ export GHBOT_SASL_LOGIN=ErgoBot
 export GHBOT_SASL_PASSWORD=pLL2oLleAOg7AlD_MCoiMA
 ```
 
+On the GitHub side, you must configure your webhook to send content type `application/json` (instead of the default `application/x-www-form-urlencoded`), and configure a secret token matching the value of `GHBOT_GITHUB_SECRET_TOKEN`.
+
 Here's a snippet of an nginx config for terminating TLS and forwarding to the bot's HTTP listener:
 
 ```nginx
@@ -32,3 +34,5 @@ Here's a snippet of an nginx config for terminating TLS and forwarding to the bo
                 proxy_pass http://unix:/tmp/ghbot_sock;
         }
 ```
+
+This bot should work with GitLab as well, but GitLab uses a static token for authentication instead of a signature system. Unset `GHBOT_GITHUB_SECRET_TOKEN` and instead export `GHBOT_GITLAB_SECRET_TOKEN`.
