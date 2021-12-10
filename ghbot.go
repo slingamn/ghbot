@@ -103,11 +103,30 @@ func (bot *Bot) announce(message string) {
 	}
 }
 
+var (
+	signatureHeaders = []string{"X-Hub-Signature-256", "X-Gogs-Signature", "X-Gitea-Signature"}
+	msgTypeHeaders   = []string{"X-Github-Event", "X-Gogs-Event", "X-Gitea-Event"}
+)
+
+func extractHeaders(headers http.Header) (signature, msgType string) {
+	tryAllHeaders := func(headers http.Header, names []string) (result string) {
+		for _, name := range names {
+			if val := headers.Get(name); val != "" {
+				return val
+			}
+		}
+		return
+	}
+	signature = tryAllHeaders(headers, signatureHeaders)
+	msgType = strings.ToLower(tryAllHeaders(headers, msgTypeHeaders))
+	return
+}
+
 // implements http.Handler
 func (bot *Bot) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	defer HandlePanic(nil)
 
-	signature := req.Header.Get("X-Hub-Signature-256")
+	signature, msgType := extractHeaders(req.Header)
 	if signature == "" {
 		log.Printf("received unsigned request from %s\n", req.RemoteAddr)
 		return
@@ -131,7 +150,6 @@ func (bot *Bot) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	msgType := strings.ToLower(req.Header.Get("X-Github-Event"))
 	if bot.Debug {
 		log.Printf("received %s: %s\n", msgType, body)
 	}
