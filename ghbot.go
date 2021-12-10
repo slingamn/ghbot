@@ -343,24 +343,38 @@ func (bot *Bot) processPush(msgType string, body []byte) {
 	if evt.Ref != nil {
 		ref = *evt.Ref
 	}
+	commits := evt.Commits
+	if len(commits) == 0 {
+		return
+	}
+	if len(commits) == 1 {
+		bot.announce(fmt.Sprintf("%s/%s: %s pushed a commit to %s: %s",
+			*evt.Repo.Owner.Login, *evt.Repo.Name,
+			*evt.Pusher.Name, ref,
+			bot.describeCommit(*commits[0]),
+		))
+	}
 	bot.announce(fmt.Sprintf("%s/%s: %s pushed %d commit(s) to %s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		*evt.Pusher.Name, len(evt.Commits), ref))
-	commits := evt.Commits
 	// grace of 1, since we'd have to display a "commits omitted" message anyway
 	omitted := len(commits) - maxCommits
 	if omitted > 1 {
 		commits = commits[len(commits)-maxCommits:]
 	}
 	for _, commit := range commits {
-		author, message := extractAuthorMessage(*commit)
-		bot.announce(fmt.Sprintf("%s [%s]: \"%s\" %s",
-			(*commit.ID)[:12], author, message, shortenURL(*commit.URL),
-		))
+		bot.announce(bot.describeCommit(*commit))
 	}
 	if omitted > 1 {
 		bot.announce(fmt.Sprintf("+%d hidden commit(s)", omitted))
 	}
+}
+
+func (bot *Bot) describeCommit(commit github.HeadCommit) string {
+	author, message := extractAuthorMessage(commit)
+	return fmt.Sprintf("%s [%s]: \"%s\" %s",
+		(*commit.ID)[:12], author, message, shortenURL(*commit.URL),
+	)
 }
 
 func newBot() (bot *Bot, err error) {
