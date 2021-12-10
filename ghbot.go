@@ -272,17 +272,20 @@ func (bot *Bot) processIssues(msgType string, body []byte) {
 		return
 	}
 	action := *evt.Action
+	var description string
 	switch action {
-	case "opened", "edited", "deleted", "closed", "reopened", "assigned", "unassigned":
+	case "opened":
+		description = fmt.Sprintf("\"%s\" ", truncateComment(*evt.Issue.Body))
+	case "edited", "deleted", "closed", "reopened", "assigned", "unassigned":
 		// ok
 	default:
 		// ignore "labeled", "milestoned", a few others
 		return
 	}
-	bot.announce(fmt.Sprintf("%s/%s: %s %s issue #%d (%s): %s",
+	bot.announce(fmt.Sprintf("%s/%s: %s %s issue #%d (%s): %s%s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		*evt.Sender.Login, *evt.Action, *evt.Issue.Number, *evt.Issue.Title,
-		shortenURL(*evt.Issue.HTMLURL)))
+		description, shortenURL(*evt.Issue.HTMLURL)))
 }
 
 func (bot *Bot) processIssueComment(msgType string, body []byte) {
