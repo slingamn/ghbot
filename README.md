@@ -9,6 +9,7 @@ It is configured using environment variables:
 # required
 export GHBOT_NICK=ErgoBot
 export GHBOT_SERVER=testnet.ergo.chat:6697
+export GHBOT_CHANNEL=#chat
 # required: enter this in the GitHub webhook dashboard,
 # and GitHub will use it to sign its requests:
 export GHBOT_GITHUB_SECRET_TOKEN=HyeVmUhQpADEvWuyLw5TDkpzeohjzw6RLKE6NPveuCk
@@ -18,7 +19,6 @@ export GHBOT_LISTEN_ADDR=unix:/tmp/ghbot_sock
 # export GHBOT_LISTEN_ADDR="127.0.0.1:8080"
 # for public plaintext HTTP (ugh):
 # export GHBOT_LISTEN_ADDR=":9473"
-export GHBOT_CHANNEL=#chat
 
 # optional: for authenticating the bot to the IRC server
 export GHBOT_SASL_LOGIN=ErgoBot

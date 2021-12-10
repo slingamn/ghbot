@@ -86,8 +86,6 @@ func verifyHmacSha256(msg, sig, key []byte) bool {
 	return hmac.Equal(truesig, sig)
 }
 
-type empty struct{}
-
 type Bot struct {
 	ircevent.Connection
 	Channel       string
