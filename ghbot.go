@@ -353,6 +353,7 @@ func (bot *Bot) processPush(msgType string, body []byte) {
 			*evt.Pusher.Name, ref,
 			bot.describeCommit(*commits[0]),
 		))
+		return
 	}
 	bot.announce(fmt.Sprintf("%s/%s: %s pushed %d commit(s) to %s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
