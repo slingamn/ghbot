@@ -343,6 +343,13 @@ func (bot *Bot) processPush(msgType string, body []byte) {
 	if evt.Ref != nil {
 		ref = *evt.Ref
 	}
+	username := "n/a"
+	if evt.Pusher.Name != nil {
+		username = *evt.Pusher.Name
+	} else if evt.Pusher.Login != nil {
+		// gogs publishes 'username' and 'login' but not 'name':
+		username = *evt.Pusher.Login
+	}
 	commits := evt.Commits
 	if len(commits) == 0 {
 		return
@@ -350,14 +357,14 @@ func (bot *Bot) processPush(msgType string, body []byte) {
 	if len(commits) == 1 {
 		bot.announce(fmt.Sprintf("%s/%s: %s pushed a commit to %s: %s",
 			*evt.Repo.Owner.Login, *evt.Repo.Name,
-			*evt.Pusher.Name, ref,
+			username, ref,
 			bot.describeCommit(*commits[0]),
 		))
 		return
 	}
 	bot.announce(fmt.Sprintf("%s/%s: %s pushed %d commit(s) to %s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
-		*evt.Pusher.Name, len(evt.Commits), ref))
+		username, len(evt.Commits), ref))
 	// grace of 1, since we'd have to display a "commits omitted" message anyway
 	omitted := len(commits) - maxCommits
 	if omitted > 1 {
