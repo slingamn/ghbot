@@ -185,19 +185,15 @@ func (bot *Bot) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		handler = bot.processWorkflowRun
 	}
 
-	// if we can't handle the request, don't read the body:
-	if handler == nil {
-		if bot.Debug {
-			log.Printf("ignoring message type `%s`\n", msgType)
-		}
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
+	// always read the body even if handler is nil;
+	// nginx gets unhappy if you close the connection while it's still
+	// trying to send the POST body, sometimes this can even cause a 502
 
 	l := io.LimitedReader{R: req.Body, N: readLimit}
 	body, err := io.ReadAll(&l)
 	if err != nil {
 		log.Printf("error reading response body from %s: %v\n", req.RemoteAddr, err)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
@@ -212,7 +208,9 @@ func (bot *Bot) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if bot.Debug {
 		log.Printf("received %s: %s\n", msgType, body)
 	}
-	handler(msgType, body)
+	if handler != nil {
+		handler(msgType, body)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
