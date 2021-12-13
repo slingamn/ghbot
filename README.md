@@ -11,7 +11,9 @@ export GHBOT_NICK=ErgoBot
 export GHBOT_SERVER=testnet.ergo.chat:6697
 export GHBOT_CHANNEL=#chat
 # required: enter this in the GitHub webhook dashboard,
-# and GitHub will use it to sign its requests:
+# and GitHub will use it to sign its requests.
+# to generate a new, secure token:
+# python3 -c "import secrets; print(secrets.token_urlsafe())"
 export GHBOT_GITHUB_SECRET_TOKEN=HyeVmUhQpADEvWuyLw5TDkpzeohjzw6RLKE6NPveuCk
 # required: this should be used with nginx or similar for TLS termination:
 export GHBOT_LISTEN_ADDR=unix:/tmp/ghbot_sock
