@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,9 +34,13 @@ const (
 	// https://docs.github.com/en/developers/webhooks-and-events/webhooks/webhook-events-and-payloads
 	// "Note: Payloads are capped at 25 MB. If your event generates a larger payload,
 	// a webhook will not be fired."
-	// we can't validate the request's signature until we've read the entire body,
-	// so stop reading after 25MB so non-GitHub requests can't DoS us:
-	readLimit = 25 * 1024 * 1024
+	// with GitHub, we can't validate the request's signature until we've read the entire body;
+	// this creates a DoS risk, so we have to cap the amount of data we read.
+	// typical payloads seem to be about 15 KB, let's go an order of magnitude up from there:
+	defaultPostReadLimit = 1024 * 1024
+	maxPostReadLimit     = 25 * 1024 * 1024
+	// IIS default value, pretty generous:
+	headerLimit = 16 * 1024
 
 	httpTimeout = 30 * time.Second
 
@@ -90,6 +95,7 @@ type Bot struct {
 	GHSignatureToken []byte
 	GLStaticToken    []byte
 	UsePrivmsg       bool
+	PostReadLimit    int
 	Debug            bool
 }
 
@@ -189,7 +195,7 @@ func (bot *Bot) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// nginx gets unhappy if you close the connection while it's still
 	// trying to send the POST body, sometimes this can even cause a 502
 
-	l := io.LimitedReader{R: req.Body, N: readLimit}
+	l := io.LimitedReader{R: req.Body, N: int64(bot.PostReadLimit)}
 	body, err := io.ReadAll(&l)
 	if err != nil {
 		log.Printf("error reading response body from %s: %v\n", req.RemoteAddr, err)
@@ -464,6 +470,13 @@ func newBot() (bot *Bot, err error) {
 	debug := os.Getenv("GHBOT_DEBUG") != ""
 	insecure := os.Getenv("GHBOT_INSECURE_SKIP_VERIFY") != ""
 	usePrivmsg := os.Getenv("GHBOT_USE_PRIVMSG") != ""
+	readLimit, err := strconv.Atoi(os.Getenv("GHBOT_MAX_POST_BODY_BYTES"))
+	if err != nil {
+		readLimit = defaultPostReadLimit
+	}
+	if readLimit > maxPostReadLimit {
+		readLimit = maxPostReadLimit
+	}
 
 	var listener net.Listener
 	httpaddr = strings.TrimPrefix(httpaddr, "unix:")
@@ -500,6 +513,7 @@ func newBot() (bot *Bot, err error) {
 		GLStaticToken:    glStaticToken,
 		Debug:            debug,
 		UsePrivmsg:       usePrivmsg,
+		PostReadLimit:    readLimit,
 	}
 
 	bot.AddConnectCallback(func(e ircmsg.Message) {
@@ -510,7 +524,7 @@ func newBot() (bot *Bot, err error) {
 		Handler:        bot,
 		ReadTimeout:    httpTimeout,
 		WriteTimeout:   httpTimeout,
-		MaxHeaderBytes: 1024 * 1024,
+		MaxHeaderBytes: headerLimit,
 	}
 
 	go func() {
