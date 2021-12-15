@@ -19,8 +19,11 @@ export GHBOT_GITHUB_SECRET_TOKEN=HyeVmUhQpADEvWuyLw5TDkpzeohjzw6RLKE6NPveuCk
 export GHBOT_LISTEN_ADDR=unix:/tmp/ghbot_sock
 # for proxying to loopback TCP:
 # export GHBOT_LISTEN_ADDR="127.0.0.1:8080"
-# for public plaintext HTTP (ugh):
+# for a public listener:
 # export GHBOT_LISTEN_ADDR=":9473"
+# in which case you should set these for native TLS:
+# export GHBOT_TLS_CERT_PATH="/path/to/cert.pem"
+# export GHBOT_TLS_KEY_PATH="/path/to/key.pem"
 
 # optional: for authenticating the bot to the IRC server
 export GHBOT_SASL_LOGIN=ErgoBot

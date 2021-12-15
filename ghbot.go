@@ -22,6 +22,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ergochat/irc-go/ircevent"
@@ -478,6 +479,26 @@ func newBot() (bot *Bot, err error) {
 		readLimit = maxPostReadLimit
 	}
 
+	var tlsConf *tls.Config
+	certPath := os.Getenv("GHBOT_TLS_CERT_PATH")
+	keyPath := os.Getenv("GHBOT_TLS_KEY_PATH")
+	if certPath != "" && keyPath != "" {
+		interval := 10 * time.Minute
+		intervalSecs, sErr := strconv.Atoi(os.Getenv("GHBOT_TLS_CERT_REFRESH_INTERVAL_SECS"))
+		if sErr == nil {
+			interval = time.Second * time.Duration(intervalSecs)
+		}
+		watcher := new(CertWatcher)
+		err = watcher.Load(certPath, keyPath, interval)
+		if err != nil {
+			return
+		}
+		tlsConf = &tls.Config{
+			MinVersion:     tls.VersionTLS13,
+			GetCertificate: watcher.GetCertificate,
+		}
+	}
+
 	var listener net.Listener
 	httpaddr = strings.TrimPrefix(httpaddr, "unix:")
 	if strings.HasPrefix(httpaddr, "/") {
@@ -492,17 +513,20 @@ func newBot() (bot *Bot, err error) {
 	if err != nil {
 		return
 	}
+	if tlsConf != nil {
+		listener = tls.NewListener(listener, tlsConf)
+	}
 
-	var tlsconf *tls.Config
+	var ircTLSConf *tls.Config
 	if insecure {
-		tlsconf = &tls.Config{InsecureSkipVerify: true}
+		ircTLSConf = &tls.Config{InsecureSkipVerify: true}
 	}
 	bot = &Bot{
 		Connection: ircevent.Connection{
 			Server:       server,
 			Nick:         nick,
 			UseTLS:       true,
-			TLSConfig:    tlsconf,
+			TLSConfig:    ircTLSConf,
 			SASLLogin:    saslLogin, // SASL will be enabled automatically if these are set
 			SASLPassword: saslPassword,
 			QuitMessage:  version,
@@ -533,6 +557,93 @@ func newBot() (bot *Bot, err error) {
 	}()
 
 	return bot, nil
+}
+
+type CertWatcher struct {
+	sync.Mutex
+
+	cert *tls.Certificate
+
+	certPath  string
+	certMtime time.Time
+	keyPath   string
+	interval  time.Duration
+
+	reloadTimer *time.Timer
+	stopped     bool
+}
+
+func (c *CertWatcher) Load(certPath, keyPath string, interval time.Duration) (err error) {
+	if interval <= 0 {
+		return fmt.Errorf("invalid interval: %v", interval)
+	}
+	c.certPath, c.keyPath = certPath, keyPath
+	c.interval = interval
+	c.cert, c.certMtime, err = c.load(time.Time{})
+	if err != nil {
+		return
+	}
+	c.reloadTimer = time.AfterFunc(interval, c.reload)
+	return
+}
+
+func (c *CertWatcher) Stop() {
+	c.reloadTimer.Stop()
+	c.Lock()
+	defer c.Unlock()
+	c.stopped = true
+}
+
+func (c *CertWatcher) GetCertificate(h *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	c.Lock()
+	defer c.Unlock()
+	return c.cert, nil
+}
+
+func (c *CertWatcher) reload() {
+	// reschedule ourselves if necessary
+	stopped := false
+	defer func() {
+		if !stopped {
+			c.reloadTimer.Stop()
+			c.reloadTimer.Reset(c.interval)
+		}
+	}()
+
+	c.Lock()
+	mtime := c.certMtime
+	c.Unlock()
+
+	cert, newMtime, err := c.load(mtime)
+	if err != nil {
+		log.Printf("error reloading certificate: %v\n", err)
+		return
+	}
+	if cert == nil {
+		return // not modified
+	}
+	c.Lock()
+	c.cert = cert
+	c.certMtime = newMtime
+	stopped = c.stopped
+	c.Unlock()
+}
+
+func (c *CertWatcher) load(lastMtime time.Time) (certP *tls.Certificate, mtime time.Time, err error) {
+	stat, err := os.Stat(c.certPath)
+	if err != nil {
+		return
+	}
+	mtime = stat.ModTime()
+	if !mtime.After(lastMtime) {
+		return
+	}
+	cert, err := tls.LoadX509KeyPair(c.certPath, c.keyPath)
+	if err != nil {
+		return
+	}
+	certP = &cert
+	return
 }
 
 func main() {
