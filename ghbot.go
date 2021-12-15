@@ -488,8 +488,8 @@ func newBot() (bot *Bot, err error) {
 		if sErr == nil {
 			interval = time.Second * time.Duration(intervalSecs)
 		}
-		watcher := new(CertWatcher)
-		err = watcher.Load(certPath, keyPath, interval)
+		var watcher *CertWatcher
+		watcher, err = NewCertWatcher(certPath, keyPath, interval)
 		if err != nil {
 			return
 		}
@@ -573,10 +573,11 @@ type CertWatcher struct {
 	stopped     bool
 }
 
-func (c *CertWatcher) Load(certPath, keyPath string, interval time.Duration) (err error) {
+func NewCertWatcher(certPath, keyPath string, interval time.Duration) (c *CertWatcher, err error) {
 	if interval <= 0 {
-		return fmt.Errorf("invalid interval: %v", interval)
+		return nil, fmt.Errorf("invalid interval: %v", interval)
 	}
+	c = new(CertWatcher)
 	c.certPath, c.keyPath = certPath, keyPath
 	c.interval = interval
 	c.cert, c.certMtime, err = c.load(time.Time{})
