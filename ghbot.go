@@ -36,10 +36,10 @@ const (
 	// "Note: Payloads are capped at 25 MB. If your event generates a larger payload,
 	// a webhook will not be fired."
 	// with GitHub, we can't validate the request's signature until we've read the entire body;
-	// this creates a DoS risk, so we have to cap the amount of data we read.
-	// typical payloads seem to be about 15 KB, let's leave a lot of headroom
-	defaultPostReadLimit = 8 * 1024 * 1024
+	// this creates a DoS risk, so we want to cap the amount of data we read.
+	// typical payloads seem to be about 15 KB [shrug]
 	maxPostReadLimit     = 25 * 1024 * 1024
+	defaultPostReadLimit = maxPostReadLimit
 	// IIS default value, pretty generous:
 	headerLimit = 16 * 1024
 
@@ -97,11 +97,16 @@ func verifyHmacSha256(msg, sig, key []byte) bool {
 	return hmac.Equal(truesig, sig)
 }
 
+func validatePath(path string, expected []byte) bool {
+	return hmac.Equal([]byte(strings.TrimPrefix(path, "/")), expected)
+}
+
 type Bot struct {
 	ircevent.Connection
 	Channel          string
 	GHSignatureToken []byte
 	GLStaticToken    []byte
+	pathSecretToken  []byte
 	PostReadLimit    int
 	semaphore        chan empty
 	UsePrivmsg       bool
@@ -164,6 +169,12 @@ func (bot *Bot) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 	}()
+
+	if bot.pathSecretToken != nil && !validatePath(req.URL.Path, bot.pathSecretToken) {
+		log.Printf("Ignoring request to incorrect path from %s\n", req.RemoteAddr)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
 
 	if !bot.tryAcquireSemaphore() {
 		log.Printf("Concurrency limit exceeded, discarding request from %s\n", req.RemoteAddr)
@@ -487,6 +498,10 @@ func newBot() (bot *Bot, err error) {
 	} else {
 		return nil, fmt.Errorf("you must export either GHBOT_GITHUB_SECRET_TOKEN or GHBOT_GITLAB_SECRET_TOKEN")
 	}
+	var pathSecretToken []byte
+	if pathStr := os.Getenv("GHBOT_URL_PATH"); pathStr != "" {
+		pathSecretToken = []byte(strings.TrimPrefix(pathStr, "/"))
+	}
 	channel := os.Getenv("GHBOT_CHANNEL")
 	// SASL is optional:
 	saslLogin := os.Getenv("GHBOT_SASL_LOGIN")
@@ -569,6 +584,7 @@ func newBot() (bot *Bot, err error) {
 		Channel:          channel,
 		GHSignatureToken: ghSignatureToken,
 		GLStaticToken:    glStaticToken,
+		pathSecretToken:  pathSecretToken,
 		Debug:            debug,
 		UsePrivmsg:       usePrivmsg,
 		PostReadLimit:    readLimit,
