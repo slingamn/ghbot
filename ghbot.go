@@ -37,19 +37,24 @@ const (
 	// a webhook will not be fired."
 	// with GitHub, we can't validate the request's signature until we've read the entire body;
 	// this creates a DoS risk, so we have to cap the amount of data we read.
-	// typical payloads seem to be about 15 KB, let's go an order of magnitude up from there:
-	defaultPostReadLimit = 1024 * 1024
+	// typical payloads seem to be about 15 KB, let's leave a lot of headroom
+	defaultPostReadLimit = 8 * 1024 * 1024
 	maxPostReadLimit     = 25 * 1024 * 1024
 	// IIS default value, pretty generous:
 	headerLimit = 16 * 1024
 
 	httpTimeout = 30 * time.Second
 
+	// the official github client appears to send requests in serial?
+	concurrencyLimit = 4
+
 	ircMessageMaxPayload = 400
 
 	commentTextLimitBytes = 200
 
 	maxCommits = 3
+
+	shortHashLen = 10
 )
 
 var (
@@ -57,6 +62,8 @@ var (
 		Timeout: 15 * time.Second,
 	}
 )
+
+type empty struct{}
 
 func isGithubURL(url_ string) bool {
 	return strings.HasPrefix(url_, "https://github.com/") || strings.HasPrefix(url_, "https://www.github.com/")
@@ -95,9 +102,23 @@ type Bot struct {
 	Channel          string
 	GHSignatureToken []byte
 	GLStaticToken    []byte
-	UsePrivmsg       bool
 	PostReadLimit    int
+	semaphore        chan empty
+	UsePrivmsg       bool
 	Debug            bool
+}
+
+func (b *Bot) tryAcquireSemaphore() bool {
+	select {
+	case b.semaphore <- empty{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (b *Bot) releaseSemaphore() {
+	<-b.semaphore
 }
 
 func (bot *Bot) announce(message string) {
@@ -144,6 +165,13 @@ func (bot *Bot) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}()
 
+	if !bot.tryAcquireSemaphore() {
+		log.Printf("Concurrency limit exceeded, discarding request from %s\n", req.RemoteAddr)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	defer bot.releaseSemaphore()
+
 	msgType, signature, gitlabToken, err := extractHeaders(req.Header)
 	if err != nil {
 		log.Printf("error reading headers: %s\n", err)
@@ -153,16 +181,16 @@ func (bot *Bot) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if bot.GLStaticToken != nil {
 		if gitlabToken == "" {
-			log.Printf("ignoring request without required GitLab static token\n")
+			log.Printf("ignoring request without required GitLab static token from %s\n", req.RemoteAddr)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		} else if !hmac.Equal([]byte(gitlabToken), bot.GLStaticToken) {
-			log.Printf("ignoring request with incorrect GitLab static token\n")
+			log.Printf("ignoring request with incorrect GitLab static token from %s\n", req.RemoteAddr)
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 	} else if len(signature) == 0 {
-		log.Printf("ignoring request without required signature token\n")
+		log.Printf("ignoring request without required signature token from %s\n", req.RemoteAddr)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -213,7 +241,7 @@ func (bot *Bot) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if bot.Debug {
-		log.Printf("received %s: %s\n", msgType, body)
+		log.Printf("received %s from %s: %s\n", msgType, req.RemoteAddr, body)
 	}
 	if handler != nil {
 		handler(msgType, body)
@@ -252,7 +280,7 @@ func (bot *Bot) processWorkflowRun(msgType string, body []byte) {
 	_, message := extractAuthorMessage(*evt.WorkflowRun.HeadCommit)
 	bot.announce(fmt.Sprintf("%s/%s: workflow for commit %s (\"%s\") finished with status %s: %s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
-		(*evt.WorkflowRun.HeadCommit.ID)[:12], message,
+		(*evt.WorkflowRun.HeadCommit.ID)[:shortHashLen], message,
 		strings.ToUpper(*evt.WorkflowRun.Conclusion),
 		shortenURL(*evt.WorkflowRun.HTMLURL),
 	))
@@ -440,7 +468,7 @@ func (bot *Bot) processPush(msgType string, body []byte) {
 func (bot *Bot) describeCommit(commit github.HeadCommit) string {
 	author, message := extractAuthorMessage(commit)
 	return fmt.Sprintf("%s [%s]: \"%s\" %s",
-		(*commit.ID)[:12], author, message, shortenURL(*commit.URL),
+		(*commit.ID)[:shortHashLen], author, message, shortenURL(*commit.URL),
 	)
 }
 
@@ -473,7 +501,13 @@ func newBot() (bot *Bot, err error) {
 	usePrivmsg := os.Getenv("GHBOT_USE_PRIVMSG") != ""
 	readLimit, err := strconv.Atoi(os.Getenv("GHBOT_MAX_POST_BODY_BYTES"))
 	if err != nil {
-		readLimit = defaultPostReadLimit
+		if glStaticToken != nil {
+			// no DoS concern with GitLab because we can authenticate the request
+			// based on the headers alone:
+			readLimit = maxPostReadLimit
+		} else {
+			readLimit = defaultPostReadLimit
+		}
 	}
 	if readLimit > maxPostReadLimit {
 		readLimit = maxPostReadLimit
@@ -538,6 +572,7 @@ func newBot() (bot *Bot, err error) {
 		Debug:            debug,
 		UsePrivmsg:       usePrivmsg,
 		PostReadLimit:    readLimit,
+		semaphore:        make(chan empty, concurrencyLimit),
 	}
 
 	bot.AddConnectCallback(func(e ircmsg.Message) {
