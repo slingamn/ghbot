@@ -351,7 +351,9 @@ func (bot *Bot) processPullRequest(msgType string, body []byte) {
 	case "assigned", "closed", "edited", "reopened", "unassigned":
 		// ok
 	case "opened":
-		description = fmt.Sprintf("\"%s\" ", truncateComment(*evt.PullRequest.Body))
+		if evt.PullRequest.Body != nil {
+			description = fmt.Sprintf("\"%s\" ", truncateComment(*evt.PullRequest.Body))
+		}
 	case "synchronize":
 		// "Triggered when a pull request's head branch is updated." lol
 		action = "updated"
