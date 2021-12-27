@@ -33,7 +33,7 @@ export GHBOT_SASL_PASSWORD=pLL2oLleAOg7AlD_MCoiMA
 # this is reasonably secure if you only allow https. to generate your own:
 # python3 -c "import secrets; print(secrets.token_urlsafe())"
 # you can also enforce this in the nginx configuration
-export GHBOTH_URL_PATH=/SWVSrKUQRjT1OcP9-NDdGU26Zbu6rjr-j3Lqj8ElfLA
+# export GHBOTH_URL_PATH=/SWVSrKUQRjT1OcP9-NDdGU26Zbu6rjr-j3Lqj8ElfLA
 ```
 
 On the GitHub side, you must configure your webhook to send content type `application/json` (instead of the default `application/x-www-form-urlencoded`), and configure a secret token matching the value of `GHBOT_GITHUB_SECRET_TOKEN`.
