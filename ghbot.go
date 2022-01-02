@@ -46,7 +46,7 @@ const (
 	httpTimeout = 30 * time.Second
 
 	// the official github client appears to send requests in serial?
-	concurrencyLimit = 4
+	concurrencyLimit = 8
 
 	ircMessageMaxPayload = 400
 
