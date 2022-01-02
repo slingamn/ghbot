@@ -229,6 +229,8 @@ func (bot *Bot) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// per pull_request_review event
 	case "workflow_run":
 		handler = bot.processWorkflowRun
+	case "release":
+		handler = bot.processRelease
 	}
 
 	// always read the body even if handler is nil;
@@ -483,6 +485,19 @@ func (bot *Bot) describeCommit(commit github.HeadCommit) string {
 	return fmt.Sprintf("%s [%s]: \"%s\" %s",
 		(*commit.ID)[:shortHashLen], author, message, shortenURL(*commit.URL),
 	)
+}
+
+func (bot *Bot) processRelease(msgType string, body []byte) {
+	var evt github.ReleaseEvent
+	err := json.Unmarshal(body, &evt)
+	if err != nil {
+		log.Printf("invalid JSON for push: %v\n", err)
+		return
+	}
+	bot.announce(fmt.Sprintf("%s/%s: %s %s a release: %s %s",
+		*evt.Repo.Owner.Login, *evt.Repo.Name,
+		*evt.Sender.Login, *evt.Action, *evt.Release.TagName,
+		shortenURL(*evt.Release.HTMLURL)))
 }
 
 func newBot() (bot *Bot, err error) {
