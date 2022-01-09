@@ -41,7 +41,7 @@ On the GitHub side, you must configure your webhook to send content type `applic
 Here's a snippet of an nginx config for terminating TLS and forwarding to the bot's HTTP listener:
 
 ```nginx
-        location /my_ghbot {
+        location /ghbot_n0geeCIH1cIahJSnjNM6jU4awF74hyjvl7xDuMUS47s {
                 proxy_pass http://unix:/tmp/ghbot_sock;
         }
 ```
