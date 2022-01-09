@@ -69,8 +69,19 @@ func isGithubURL(url_ string) bool {
 	return strings.HasPrefix(url_, "https://github.com/") || strings.HasPrefix(url_, "https://www.github.com/")
 }
 
-// simple client for the git.io shortener
-func shortenURL(url_ string) (result string) {
+// displays a URL: returns the empty string if GHBOT_HIDE_URLS is set,
+// otherwise returns fmt.Sprintf of the URL, if GitHub is detected (as opposed
+// a self-hosted GitLab or Gogs) then the URL is shortened with git.io.
+func (bot *Bot) displayURL(fmtStr string, url_ string) (result string) {
+	if bot.HideURLs {
+		return ""
+	}
+	if fmtStr == "" {
+		fmtStr = "%s"
+	}
+	defer func() {
+		result = fmt.Sprintf(fmtStr, result)
+	}()
 	result = url_
 	// if this a selfhosted gogs or gitea, don't attempt to shorten:
 	if !isGithubURL(url_) {
@@ -110,6 +121,7 @@ type Bot struct {
 	PostReadLimit    int
 	semaphore        chan empty
 	UsePrivmsg       bool
+	HideURLs         bool
 	Debug            bool
 }
 
@@ -291,11 +303,11 @@ func (bot *Bot) processWorkflowRun(msgType string, body []byte) {
 		return
 	}
 	_, message := extractAuthorMessage(*evt.WorkflowRun.HeadCommit)
-	bot.announce(fmt.Sprintf("%s/%s: workflow for commit %s (\"%s\") finished with status %s: %s",
+	bot.announce(fmt.Sprintf("%s/%s: workflow for commit %s (\"%s\") finished with status %s%s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		(*evt.WorkflowRun.HeadCommit.ID)[:shortHashLen], message,
 		strings.ToUpper(*evt.WorkflowRun.Conclusion),
-		shortenURL(*evt.WorkflowRun.HTMLURL),
+		bot.displayURL(": %s", *evt.WorkflowRun.HTMLURL),
 	))
 }
 
@@ -331,11 +343,11 @@ func (bot *Bot) processCommitComment(msgType string, body []byte) {
 		log.Printf("invalid JSON for %s: %v\n", msgType, err)
 		return
 	}
-	bot.announce(fmt.Sprintf("%s/%s: %s commented on commit %s: \"%s\" %s",
+	bot.announce(fmt.Sprintf("%s/%s: %s commented on commit %s: \"%s\"%s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		*evt.Comment.User.Login, (*evt.Comment.CommitID)[:8],
 		truncateComment(*evt.Comment.Body),
-		shortenURL(*evt.Comment.HTMLURL),
+		bot.displayURL(" %s", *evt.Comment.HTMLURL),
 	))
 }
 
@@ -366,7 +378,7 @@ func (bot *Bot) processPullRequest(msgType string, body []byte) {
 	bot.announce(fmt.Sprintf("%s/%s: %s %s pull request #%d (%s): %s%s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		*evt.PullRequest.User.Login, action, *evt.PullRequest.Number, *evt.PullRequest.Title,
-		description, shortenURL(*evt.PullRequest.HTMLURL),
+		description, bot.displayURL("%s", *evt.PullRequest.HTMLURL),
 	))
 }
 
@@ -377,10 +389,10 @@ func (bot *Bot) processPullRequestReview(msgType string, body []byte) {
 		log.Printf("invalid JSON for %s: %v\n", msgType, err)
 		return
 	}
-	bot.announce(fmt.Sprintf("%s/%s: %s reviewed pull request #%d (%s): %s",
+	bot.announce(fmt.Sprintf("%s/%s: %s reviewed pull request #%d (%s)%s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		*evt.Review.User.Login, *evt.PullRequest.Number, *evt.PullRequest.Title,
-		shortenURL(*evt.Review.HTMLURL),
+		bot.displayURL(": %s", *evt.Review.HTMLURL),
 	))
 }
 
@@ -405,7 +417,7 @@ func (bot *Bot) processIssues(msgType string, body []byte) {
 	bot.announce(fmt.Sprintf("%s/%s: %s %s issue #%d (%s): %s%s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		*evt.Sender.Login, *evt.Action, *evt.Issue.Number, *evt.Issue.Title,
-		description, shortenURL(*evt.Issue.HTMLURL)))
+		description, bot.displayURL("%s", *evt.Issue.HTMLURL)))
 }
 
 func (bot *Bot) processIssueComment(msgType string, body []byte) {
@@ -415,11 +427,11 @@ func (bot *Bot) processIssueComment(msgType string, body []byte) {
 		log.Printf("invalid JSON for %s: %v\n", msgType, err)
 		return
 	}
-	bot.announce(fmt.Sprintf("%s/%s: %s commented on #%d (%s): \"%s\" %s",
+	bot.announce(fmt.Sprintf("%s/%s: %s commented on #%d (%s): \"%s\"%s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		*evt.Comment.User.Login, *evt.Issue.Number, *evt.Issue.Title,
 		truncateComment(*evt.Comment.Body),
-		shortenURL(*evt.Comment.HTMLURL),
+		bot.displayURL(" %s", *evt.Comment.HTMLURL),
 	))
 }
 
@@ -482,8 +494,8 @@ func (bot *Bot) processPush(msgType string, body []byte) {
 
 func (bot *Bot) describeCommit(commit github.HeadCommit) string {
 	author, message := extractAuthorMessage(commit)
-	return fmt.Sprintf("%s [%s]: \"%s\" %s",
-		(*commit.ID)[:shortHashLen], author, message, shortenURL(*commit.URL),
+	return fmt.Sprintf("%s [%s]: \"%s\"%s",
+		(*commit.ID)[:shortHashLen], author, message, bot.displayURL(" %s", *commit.URL),
 	)
 }
 
@@ -494,10 +506,10 @@ func (bot *Bot) processRelease(msgType string, body []byte) {
 		log.Printf("invalid JSON for push: %v\n", err)
 		return
 	}
-	bot.announce(fmt.Sprintf("%s/%s: %s %s a release: %s %s",
+	bot.announce(fmt.Sprintf("%s/%s: %s %s a release: %s%s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		*evt.Sender.Login, *evt.Action, *evt.Release.TagName,
-		shortenURL(*evt.Release.HTMLURL)))
+		bot.displayURL("%s", *evt.Release.HTMLURL)))
 }
 
 func newBot() (bot *Bot, err error) {
@@ -544,6 +556,7 @@ func newBot() (bot *Bot, err error) {
 	if readLimit > maxPostReadLimit {
 		readLimit = maxPostReadLimit
 	}
+	hideURLs := os.Getenv("GHBOT_HIDE_URLS") != ""
 
 	var tlsConf *tls.Config
 	certPath := os.Getenv("GHBOT_TLS_CERT_PATH")
@@ -606,6 +619,7 @@ func newBot() (bot *Bot, err error) {
 		UsePrivmsg:       usePrivmsg,
 		PostReadLimit:    readLimit,
 		semaphore:        make(chan empty, concurrencyLimit),
+		HideURLs:         hideURLs,
 	}
 
 	bot.AddConnectCallback(func(e ircmsg.Message) {
