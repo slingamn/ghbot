@@ -377,7 +377,7 @@ func (bot *Bot) processPullRequest(msgType string, body []byte) {
 	}
 	bot.announce(fmt.Sprintf("%s/%s: %s %s pull request #%d (%s): %s%s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
-		*evt.PullRequest.User.Login, action, *evt.PullRequest.Number, *evt.PullRequest.Title,
+		*evt.Sender.Login, action, *evt.PullRequest.Number, *evt.PullRequest.Title,
 		description, bot.displayURL("%s", *evt.PullRequest.HTMLURL),
 	))
 }
