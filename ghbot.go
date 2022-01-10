@@ -509,7 +509,7 @@ func (bot *Bot) processRelease(msgType string, body []byte) {
 	bot.announce(fmt.Sprintf("%s/%s: %s %s a release: %s%s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		*evt.Sender.Login, *evt.Action, *evt.Release.TagName,
-		bot.displayURL("%s", *evt.Release.HTMLURL)))
+		bot.displayURL(" %s", *evt.Release.HTMLURL)))
 }
 
 func newBot() (bot *Bot, err error) {
