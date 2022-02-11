@@ -17,7 +17,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"runtime/debug"
 	"strconv"
@@ -65,13 +64,8 @@ var (
 
 type empty struct{}
 
-func isGithubURL(url_ string) bool {
-	return strings.HasPrefix(url_, "https://github.com/") || strings.HasPrefix(url_, "https://www.github.com/")
-}
-
 // displays a URL: returns the empty string if GHBOT_HIDE_URLS is set,
-// otherwise returns fmt.Sprintf of the URL, if GitHub is detected (as opposed
-// a self-hosted GitLab or Gogs) then the URL is shortened with git.io.
+// otherwise returns fmt.Sprintf of the URL
 func (bot *Bot) displayURL(fmtStr string, url_ string) (result string) {
 	if bot.HideURLs {
 		return ""
@@ -79,26 +73,7 @@ func (bot *Bot) displayURL(fmtStr string, url_ string) (result string) {
 	if fmtStr == "" {
 		fmtStr = "%s"
 	}
-	defer func() {
-		result = fmt.Sprintf(fmtStr, result)
-	}()
-	result = url_
-	// if this a selfhosted gogs or gitea, don't attempt to shorten:
-	if !isGithubURL(url_) {
-		return
-	}
-	resp, err := httpClient.PostForm("https://git.io", url.Values{
-		"url": {url_},
-	})
-	if err != nil {
-		log.Printf("couldn't shorten %s: %v\n", url_, err)
-		return
-	}
-	short := resp.Header.Get("Location")
-	if short != "" {
-		result = short
-	}
-	return
+	return fmt.Sprintf(fmtStr, url_)
 }
 
 func verifyHmacSha256(msg, sig, key []byte) bool {
