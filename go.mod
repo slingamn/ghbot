@@ -2,7 +2,7 @@ module github.com/slingamn/ghbot
 
 go 1.17
 
-require github.com/ergochat/irc-go v0.1.0
+require github.com/ergochat/irc-go v0.3.0
 
 require (
 	github.com/google/go-github/v41 v41.0.0 // indirect
