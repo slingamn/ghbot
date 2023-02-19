@@ -1,6 +1,6 @@
 module github.com/slingamn/ghbot
 
-go 1.17
+go 1.19
 
 require github.com/ergochat/irc-go v0.3.0
 

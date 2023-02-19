@@ -21,13 +21,14 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ergochat/irc-go/ircevent"
 	"github.com/ergochat/irc-go/ircmsg"
 	"github.com/ergochat/irc-go/ircutils"
 	"github.com/google/go-github/v41/github"
+
+	"github.com/slingamn/ghbot/godgets"
 )
 
 const (
@@ -542,15 +543,12 @@ func newBot() (bot *Bot, err error) {
 		if sErr == nil {
 			interval = time.Second * time.Duration(intervalSecs)
 		}
-		var watcher *CertWatcher
-		watcher, err = NewCertWatcher(certPath, keyPath, interval)
+		var watcher godgets.AutoreloadingCertStore
+		err = watcher.Initialize(certPath, keyPath, interval)
 		if err != nil {
 			return
 		}
-		tlsConf = &tls.Config{
-			MinVersion:     tls.VersionTLS13,
-			GetCertificate: watcher.GetCertificate,
-		}
+		tlsConf = watcher.TLSConfig()
 	}
 
 	var listener net.Listener
@@ -614,94 +612,6 @@ func newBot() (bot *Bot, err error) {
 	}()
 
 	return bot, nil
-}
-
-type CertWatcher struct {
-	sync.Mutex
-
-	cert *tls.Certificate
-
-	certPath  string
-	certMtime time.Time
-	keyPath   string
-	interval  time.Duration
-
-	reloadTimer *time.Timer
-	stopped     bool
-}
-
-func NewCertWatcher(certPath, keyPath string, interval time.Duration) (c *CertWatcher, err error) {
-	if interval <= 0 {
-		return nil, fmt.Errorf("invalid interval: %v", interval)
-	}
-	c = new(CertWatcher)
-	c.certPath, c.keyPath = certPath, keyPath
-	c.interval = interval
-	c.cert, c.certMtime, err = c.load(time.Time{})
-	if err != nil {
-		return
-	}
-	c.reloadTimer = time.AfterFunc(interval, c.reload)
-	return
-}
-
-func (c *CertWatcher) Stop() {
-	c.reloadTimer.Stop()
-	c.Lock()
-	defer c.Unlock()
-	c.stopped = true
-}
-
-func (c *CertWatcher) GetCertificate(h *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	c.Lock()
-	defer c.Unlock()
-	return c.cert, nil
-}
-
-func (c *CertWatcher) reload() {
-	// reschedule ourselves if necessary
-	stopped := false
-	defer func() {
-		if !stopped {
-			c.reloadTimer.Stop()
-			c.reloadTimer.Reset(c.interval)
-		}
-	}()
-
-	c.Lock()
-	mtime := c.certMtime
-	c.Unlock()
-
-	cert, newMtime, err := c.load(mtime)
-	if err != nil {
-		log.Printf("error reloading certificate: %v\n", err)
-		return
-	}
-	if cert == nil {
-		return // not modified
-	}
-	c.Lock()
-	c.cert = cert
-	c.certMtime = newMtime
-	stopped = c.stopped
-	c.Unlock()
-}
-
-func (c *CertWatcher) load(lastMtime time.Time) (certP *tls.Certificate, mtime time.Time, err error) {
-	stat, err := os.Stat(c.certPath)
-	if err != nil {
-		return
-	}
-	mtime = stat.ModTime()
-	if !mtime.After(lastMtime) {
-		return
-	}
-	cert, err := tls.LoadX509KeyPair(c.certPath, c.keyPath)
-	if err != nil {
-		return
-	}
-	certP = &cert
-	return
 }
 
 func main() {
