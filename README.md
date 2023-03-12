@@ -24,6 +24,7 @@ export GHBOT_LISTEN_ADDR=unix:/tmp/ghbot_sock
 # in which case you should set these for native TLS:
 # export GHBOT_TLS_CERT_PATH="/path/to/cert.pem"
 # export GHBOT_TLS_KEY_PATH="/path/to/key.pem"
+# export GHBOT_IGNORE_REPOS="ergochat/spammy_repo,ergochat/other_spammy_repo"
 
 # optional: for authenticating the bot to the IRC server
 export GHBOT_SASL_LOGIN=ErgoBot

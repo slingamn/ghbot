@@ -99,6 +99,7 @@ type Bot struct {
 	UsePrivmsg       bool
 	HideURLs         bool
 	Debug            bool
+	IgnoreRepos      godgets.HashSet[string]
 }
 
 func (b *Bot) tryAcquireSemaphore() bool {
@@ -244,10 +245,36 @@ func (bot *Bot) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if bot.Debug {
 		log.Printf("received %s from %s: %s\n", msgType, req.RemoteAddr, body)
 	}
-	if handler != nil {
+	if handler != nil && !bot.ignoreEvent(body) {
 		handler(msgType, body)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type peekRepoName struct {
+	Repository struct {
+		Name  string `json:"name"`
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+	} `json:"repository"`
+}
+
+func (bot *Bot) ignoreEvent(body []byte) bool {
+	if bot.IgnoreRepos == nil {
+		return false
+	}
+	var p peekRepoName
+	if err := json.Unmarshal(body, &p); err == nil {
+		name := fmt.Sprintf("%s/%s", p.Repository.Owner.Login, p.Repository.Name)
+		if bot.IgnoreRepos.Has(name) {
+			if bot.Debug {
+				log.Printf("ignoring event from repository %s\n", name)
+			}
+			return true
+		}
+	}
+	return false
 }
 
 func (bot *Bot) processPing(msgType string, body []byte) {
@@ -534,6 +561,16 @@ func newBot() (bot *Bot, err error) {
 	}
 	hideURLs := os.Getenv("GHBOT_HIDE_URLS") != ""
 
+	var ignoreRepos godgets.HashSet[string]
+	if ignoreReposStr := os.Getenv("GHBOT_IGNORE_REPOS"); ignoreReposStr != "" {
+		ignoreRepos = make(godgets.HashSet[string])
+		for _, repo := range strings.Split(ignoreReposStr, ",") {
+			if repo != "" {
+				ignoreRepos.Add(repo)
+			}
+		}
+	}
+
 	var tlsConf *tls.Config
 	certPath := os.Getenv("GHBOT_TLS_CERT_PATH")
 	keyPath := os.Getenv("GHBOT_TLS_KEY_PATH")
@@ -593,6 +630,7 @@ func newBot() (bot *Bot, err error) {
 		PostReadLimit:    readLimit,
 		semaphore:        make(chan empty, concurrencyLimit),
 		HideURLs:         hideURLs,
+		IgnoreRepos:      ignoreRepos,
 	}
 
 	bot.AddConnectCallback(func(e ircmsg.Message) {
