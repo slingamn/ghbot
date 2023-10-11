@@ -467,6 +467,14 @@ func (bot *Bot) processPush(msgType string, body []byte) {
 		// gogs publishes 'username' and 'login' but not 'name':
 		username = *evt.Pusher.Login
 	}
+	if *evt.Forced {
+		bot.announce(fmt.Sprintf("%s/%s: %s force-pushed to %s: %s",
+			*evt.Repo.Owner.Login, *evt.Repo.Name,
+			username, ref,
+			*evt.Compare,
+		))
+		return
+	}
 	commits := evt.Commits
 	if len(commits) == 0 {
 		return
