@@ -1,5 +1,5 @@
-github.com/ergochat/irc-go v0.3.0 h1:qgvb2knh8d6yIVsHX+PRQ2CiRj1NGG5x88ABmR1lWng=
-github.com/ergochat/irc-go v0.3.0/go.mod h1:2vi7KNpIPWnReB5hmLpl92eMywQvuIeIIGdt/FQCph0=
+github.com/ergochat/irc-go v0.4.0 h1:0YibCKfAAtwxQdNjLQd9xpIEPisLcJ45f8FNsMHAuZc=
+github.com/ergochat/irc-go v0.4.0/go.mod h1:2vi7KNpIPWnReB5hmLpl92eMywQvuIeIIGdt/FQCph0=
 github.com/google/go-cmp v0.5.2/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/gNBxE=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
 github.com/google/go-github/v59 v59.0.0 h1:7h6bgpF5as0YQLLkEiVqpgtJqjimMYhBkD4jT5aN3VA=
