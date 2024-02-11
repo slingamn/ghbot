@@ -26,7 +26,7 @@ import (
 	"github.com/ergochat/irc-go/ircevent"
 	"github.com/ergochat/irc-go/ircmsg"
 	"github.com/ergochat/irc-go/ircutils"
-	"github.com/google/go-github/v41/github"
+	"github.com/google/go-github/v59/github"
 
 	"github.com/slingamn/ghbot/godgets"
 )
