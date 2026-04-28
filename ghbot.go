@@ -331,7 +331,11 @@ func (bot *Bot) processGitCreateDelete(msgType string, body []byte) {
 		*evt.Sender.Login, action, *evt.RefType, *evt.Ref))
 }
 
-func truncateComment(comment string) (result string) {
+func truncateComment(commentOrNil *string) (result string) {
+	if commentOrNil == nil {
+		return
+	}
+	comment := *commentOrNil
 	result = ircutils.TruncateUTF8Safe(comment, commentTextLimitBytes)
 	if len(result) < len(comment) {
 		result = fmt.Sprintf("%s[...]", result)
@@ -349,7 +353,7 @@ func (bot *Bot) processCommitComment(msgType string, body []byte) {
 	bot.announce(fmt.Sprintf("%s/%s: %s commented on commit %s: \"%s\"%s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		*evt.Comment.User.Login, (*evt.Comment.CommitID)[:8],
-		truncateComment(*evt.Comment.Body),
+		truncateComment(evt.Comment.Body),
 		bot.displayURL(" %s", *evt.Comment.HTMLURL),
 	))
 }
@@ -369,7 +373,7 @@ func (bot *Bot) processPullRequest(msgType string, body []byte) {
 		// ok
 	case "opened":
 		if evt.PullRequest.Body != nil {
-			description = fmt.Sprintf("\"%s\" ", truncateComment(*evt.PullRequest.Body))
+			description = fmt.Sprintf("\"%s\" ", truncateComment(evt.PullRequest.Body))
 		}
 	case "synchronize":
 		// "Triggered when a pull request's head branch is updated." lol
@@ -410,7 +414,7 @@ func (bot *Bot) processIssues(msgType string, body []byte) {
 	var description string
 	switch action {
 	case "opened":
-		description = fmt.Sprintf("\"%s\" ", truncateComment(*evt.Issue.Body))
+		description = fmt.Sprintf("\"%s\" ", truncateComment(evt.Issue.Body))
 	case "edited", "deleted", "closed", "reopened", "assigned", "unassigned":
 		// ok
 	default:
@@ -433,7 +437,7 @@ func (bot *Bot) processIssueComment(msgType string, body []byte) {
 	bot.announce(fmt.Sprintf("%s/%s: %s commented on #%d (%s): \"%s\"%s",
 		*evt.Repo.Owner.Login, *evt.Repo.Name,
 		*evt.Comment.User.Login, *evt.Issue.Number, *evt.Issue.Title,
-		truncateComment(*evt.Comment.Body),
+		truncateComment(evt.Comment.Body),
 		bot.displayURL(" %s", *evt.Comment.HTMLURL),
 	))
 }
